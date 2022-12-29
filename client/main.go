@@ -83,12 +83,19 @@ func (s selector) View() string {
 type model struct {
 	connection     *net.TCPConn
 	messages       []string
+	nickname       textinput.Model
 	viewport       viewport.Model
 	input          textinput.Model
 	serverSelector selector
 }
 
 func initialModel() model {
+	nickname := textinput.New()
+	nickname.Placeholder = "Enter your nickname..."
+	nickname.CharLimit = 50
+	nickname.Width = 45
+	nickname.Focus()
+
 	ti := textinput.New()
 	ti.Placeholder = "Write a message..."
 	ti.CharLimit = 255
@@ -104,6 +111,7 @@ func initialModel() model {
 		input:          ti,
 		serverSelector: s,
 		viewport:       vp,
+		nickname:       nickname,
 		connection:     nil,
 		messages:       nil,
 	}
@@ -137,6 +145,7 @@ func (m *model) readSocketMessages() tea.Msg {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
+		nCmd      tea.Cmd
 		tiCmd     tea.Cmd
 		vpCmd     tea.Cmd
 		sCmd      tea.Cmd
@@ -149,7 +158,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input, tiCmd = m.input.Update(msg)
 		m.viewport, vpCmd = m.viewport.Update(msg)
 	} else {
+		m.nickname, nCmd = m.nickname.Update(msg)
 		m.serverSelector, sCmd = m.serverSelector.Update(msg)
+
 		if len(m.serverSelector.selected) != 0 {
 			addr, _ := net.ResolveTCPAddr("tcp", m.serverSelector.choices[GetSelected(m.serverSelector.selected)])
 			conn, err := net.DialTCP("tcp", nil, addr)
@@ -157,6 +168,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				panic(fmt.Sprintf("Error connecting to server: %v", err))
 			}
 			m.connection = conn
+			if m.nickname.Value() != "" {
+				m.connection.Write([]byte(fmt.Sprintf("Login %s\n", m.nickname.Value())))
+			}
 			m.input.Focus()
 		}
 	}
@@ -167,7 +181,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Pre-batch update commands for returns
-	batched := tea.Batch(tiCmd, vpCmd, sCmd, updateCmd)
+	batched := tea.Batch(tiCmd, vpCmd, sCmd, updateCmd, nCmd)
 
 	switch msg := msg.(type) {
 	case newMessageMsg:
@@ -194,7 +208,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.input.Value() == "" {
 				return m, batched
 			}
-			_, err := m.connection.Write([]byte(m.input.Value() + "\n"))
+			_, err := m.connection.Write([]byte(fmt.Sprintf("Pubmsg %s\n", m.input.Value())))
 			if err != nil {
 				m.input.SetValue(err.Error())
 			} else {
@@ -213,7 +227,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	if m.connection == nil {
-		return m.serverSelector.View()
+		return fmt.Sprintf("%s\n\n%s", m.nickname.View(), m.serverSelector.View())
 	}
 	return fmt.Sprintf("%s\n\n%s", m.viewport.View(), m.input.View())
 }
